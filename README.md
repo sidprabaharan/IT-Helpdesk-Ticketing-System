@@ -2,7 +2,7 @@
 
 A robust ticketing system built with ASP.NET Core MVC, using modern architecture patterns and Azure cloud services to handle large volumes of support requests efficiently.
 
-![Dashboard Screenshot](docs/screenshots/dashboard.png)
+
 
 ## Key Features
 
@@ -59,7 +59,6 @@ The system follows Clean Architecture principles with:
 - **Infrastructure Layer**: External concerns (database, email, etc.)
 - **Presentation Layer**: MVC controllers and views
 
-![Architecture Diagram](docs/architecture/system-architecture.png)
 
 ## Performance Optimizations
 
