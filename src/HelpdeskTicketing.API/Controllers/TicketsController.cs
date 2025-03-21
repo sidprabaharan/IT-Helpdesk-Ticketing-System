@@ -414,3 +414,277 @@ namespace HelpdeskTicketing.API.Controllers
                     TicketId = id,
                     Content = commentDto.Content,
                     IsInternal = commentDto.IsInternal,
+                    CreatedAt = DateTime.UtcNow,
+                    AuthorId = userId
+                };
+
+                ticket.Comments.Add(comment);
+                ticket.LastUpdatedAt = DateTime.UtcNow;
+                
+                // If a support user comments on a ticket and it's in New status, automatically move to In Progress
+                if ((User.IsInRole("Support") || User.IsInRole("Admin")) && 
+                    ticket.Status == TicketStatus.New || ticket.Status == TicketStatus.Assigned)
+                {
+                    ticket.Status = TicketStatus.InProgress;
+                    
+                    // Add status change to history
+                    var history = new TicketHistory
+                    {
+                        TicketId = ticket.Id,
+                        Property = "Status",
+                        OldValue = ticket.Status.ToString(),
+                        NewValue = TicketStatus.InProgress.ToString(),
+                        ChangedAt = DateTime.UtcNow,
+                        ChangedById = userId
+                    };
+                    ticket.History.Add(history);
+                }
+
+                await _ticketRepository.UpdateAsync(ticket);
+                
+                // Send notification email
+                await _emailService.SendTicketCommentAddedAsync(ticket, comment);
+
+                return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, new CommentDto
+                {
+                    Id = comment.Id,
+                    Content = comment.Content,
+                    CreatedAt = comment.CreatedAt,
+                    IsInternal = comment.IsInternal,
+                    Author = $"{user.FirstName} {user.LastName}"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error adding comment to ticket with ID {id}");
+                return StatusCode(500, "An error occurred while adding the comment");
+            }
+        }
+
+        // POST: api/tickets/5/resolve
+        [HttpPost("{id}/resolve")]
+        [Authorize(Roles = "Support,Admin")]
+        public async Task<IActionResult> ResolveTicket(int id, ResolveTicketDto resolveDto)
+        {
+            try
+            {
+                var ticket = await _ticketRepository.GetByIdAsync(id);
+                if (ticket == null)
+                {
+                    return NotFound();
+                }
+
+                var userId = _userManager.GetUserId(User);
+                
+                // Check if the ticket is already resolved or closed
+                if (ticket.Status == TicketStatus.Resolved || ticket.Status == TicketStatus.Closed)
+                {
+                    return BadRequest("Ticket is already resolved or closed");
+                }
+
+                // Update ticket status
+                var oldStatus = ticket.Status;
+                ticket.Status = TicketStatus.Resolved;
+                ticket.ResolvedAt = DateTime.UtcNow;
+                ticket.LastUpdatedAt = DateTime.UtcNow;
+                
+                // Calculate resolution time
+                if (ticket.CreatedAt != null)
+                {
+                    ticket.ActualResolutionTimeInMinutes = (int)(ticket.ResolvedAt.Value - ticket.CreatedAt).TotalMinutes;
+                }
+
+                // Add resolution note as a comment if provided
+                if (!string.IsNullOrEmpty(resolveDto.ResolutionNote))
+                {
+                    var comment = new TicketComment
+                    {
+                        TicketId = id,
+                        Content = resolveDto.ResolutionNote,
+                        IsInternal = false,
+                        CreatedAt = DateTime.UtcNow,
+                        AuthorId = userId
+                    };
+                    ticket.Comments.Add(comment);
+                }
+
+                // Add history entry
+                var history = new TicketHistory
+                {
+                    TicketId = ticket.Id,
+                    Property = "Status",
+                    OldValue = oldStatus.ToString(),
+                    NewValue = TicketStatus.Resolved.ToString(),
+                    ChangedAt = DateTime.UtcNow,
+                    ChangedById = userId
+                };
+                ticket.History.Add(history);
+
+                await _ticketRepository.UpdateAsync(ticket);
+                
+                // Send resolution email
+                await _emailService.SendTicketResolvedAsync(ticket);
+
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error resolving ticket with ID {id}");
+                return StatusCode(500, "An error occurred while resolving the ticket");
+            }
+        }
+
+        // POST: api/tickets/5/close
+        [HttpPost("{id}/close")]
+        public async Task<IActionResult> CloseTicket(int id)
+        {
+            try
+            {
+                var ticket = await _ticketRepository.GetByIdAsync(id);
+                if (ticket == null)
+                {
+                    return NotFound();
+                }
+
+                var userId = _userManager.GetUserId(User);
+                
+                // Only the requester or support staff can close a ticket
+                if (ticket.RequesterId != userId && !User.IsInRole("Support") && !User.IsInRole("Admin"))
+                {
+                    return Forbid();
+                }
+
+                // Ticket must be in Resolved status to be closed
+                if (ticket.Status != TicketStatus.Resolved)
+                {
+                    return BadRequest("Only resolved tickets can be closed");
+                }
+
+                // Update ticket status
+                var oldStatus = ticket.Status;
+                ticket.Status = TicketStatus.Closed;
+                ticket.LastUpdatedAt = DateTime.UtcNow;
+
+                // Add history entry
+                var history = new TicketHistory
+                {
+                    TicketId = ticket.Id,
+                    Property = "Status",
+                    OldValue = oldStatus.ToString(),
+                    NewValue = TicketStatus.Closed.ToString(),
+                    ChangedAt = DateTime.UtcNow,
+                    ChangedById = userId
+                };
+                ticket.History.Add(history);
+
+                await _ticketRepository.UpdateAsync(ticket);
+                
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error closing ticket with ID {id}");
+                return StatusCode(500, "An error occurred while closing the ticket");
+            }
+        }
+    }
+
+    // DTO classes
+    public class TicketDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; }
+        public string Status { get; set; }
+        public string Priority { get; set; }
+        public string Category { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? LastUpdatedAt { get; set; }
+        public string RequesterName { get; set; }
+        public string AssignedToName { get; set; }
+    }
+
+    public class TicketDetailDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; }
+        public string Description { get; set; }
+        public string Status { get; set; }
+        public string Priority { get; set; }
+        public string Category { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? LastUpdatedAt { get; set; }
+        public DateTime? ResolvedAt { get; set; }
+        public int? EstimatedResolutionTime { get; set; }
+        public int? ActualResolutionTime { get; set; }
+        public UserDto Requester { get; set; }
+        public UserDto AssignedTo { get; set; }
+        public List<CommentDto> Comments { get; set; } = new List<CommentDto>();
+        public List<AttachmentDto> Attachments { get; set; } = new List<AttachmentDto>();
+        public List<HistoryDto> History { get; set; } = new List<HistoryDto>();
+    }
+
+    public class UserDto
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Email { get; set; }
+        public string Department { get; set; }
+    }
+
+    public class CommentDto
+    {
+        public int Id { get; set; }
+        public string Content { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public bool IsInternal { get; set; }
+        public string Author { get; set; }
+    }
+
+    public class AttachmentDto
+    {
+        public int Id { get; set; }
+        public string FileName { get; set; }
+        public DateTime UploadedAt { get; set; }
+        public long FileSizeInBytes { get; set; }
+        public string UploadedBy { get; set; }
+    }
+
+    public class HistoryDto
+    {
+        public int Id { get; set; }
+        public string Property { get; set; }
+        public string OldValue { get; set; }
+        public string NewValue { get; set; }
+        public DateTime ChangedAt { get; set; }
+        public string ChangedBy { get; set; }
+    }
+
+    public class CreateTicketDto
+    {
+        public string Title { get; set; }
+        public string Description { get; set; }
+        public string Priority { get; set; }
+        public string Category { get; set; }
+    }
+
+    public class UpdateTicketDto
+    {
+        public string Title { get; set; }
+        public string Description { get; set; }
+        public string Priority { get; set; }
+        public string Status { get; set; }
+        public string AssignedToId { get; set; }
+        public int? EstimatedResolutionTimeInMinutes { get; set; }
+    }
+
+    public class AddCommentDto
+    {
+        public string Content { get; set; }
+        public bool IsInternal { get; set; }
+    }
+
+    public class ResolveTicketDto
+    {
+        public string ResolutionNote { get; set; }
+    }
+}
