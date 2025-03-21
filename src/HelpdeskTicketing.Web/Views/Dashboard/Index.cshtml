@@ -301,4 +301,90 @@
                                                     </span>
                                                 </td>
                                                 <td>@ticket.Category</td>
-                                                <td>@(string.IsNullOrEmpty(ticket.Assign
+  <td>@(string.IsNullOrEmpty(ticket.AssignedToName) ? "Unassigned" : ticket.AssignedToName)</td>
+                                                <td>@ticket.CreatedAt.ToString("g")</td>
+                                                <td>
+                                                    <a href="@Url.Action("Details", "Tickets", new { id = ticket.Id })" class="btn btn-primary btn-sm">
+                                                        View
+                                                    </a>
+                                                    @if (ticket.Status == "Resolved")
+                                                    {
+                                                        <button type="button" class="btn btn-success btn-sm confirm-resolution" data-ticket-id="@ticket.Id">
+                                                            Confirm Resolution
+                                                        </button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <tr>
+                                            <td colspan="8" class="text-center">You haven't created any tickets yet.</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function() {
+            // Initialize DataTables
+            $('#assignedTicketsTable').DataTable();
+            $('#recentTicketsTable').DataTable();
+            $('#myTicketsTable').DataTable();
+            
+            // Handle confirm resolution buttons
+            $('.confirm-resolution').click(function() {
+                var ticketId = $(this).data('ticket-id');
+                
+                // Show confirmation dialog
+                if (confirm('Are you sure this issue has been resolved? This will close the ticket.')) {
+                    // Submit confirmation via AJAX
+                    $.post('@Url.Action("Close", "Tickets")/' + ticketId, function(data) {
+                        // Reload page on success
+                        window.location.reload();
+                    }).fail(function(error) {
+                        alert('Failed to confirm resolution. Please try again.');
+                    });
+                }
+            });
+        });
+    </script>
+}
+
+@functions {
+    string GetStatusBadgeClass(string status)
+    {
+        return status switch
+        {
+            "New" => "badge-primary",
+            "Assigned" => "badge-info",
+            "InProgress" => "badge-warning",
+            "OnHold" => "badge-secondary",
+            "Resolved" => "badge-success",
+            "Closed" => "badge-dark",
+            "Reopened" => "badge-danger",
+            _ => "badge-secondary"
+        };
+    }
+
+    string GetPriorityBadgeClass(string priority)
+    {
+        return priority switch
+        {
+            "Low" => "badge-secondary",
+            "Medium" => "badge-info",
+            "High" => "badge-warning",
+            "Critical" => "badge-danger",
+            _ => "badge-secondary"
+        };
+    }
+}
